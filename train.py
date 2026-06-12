@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Train and evaluate a small GPT-style model on WikiText-2."""
+"""Train and evaluate a GPT-style model on memory-mapped token data."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import random
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from model import ModelConfig, TransformerLM
@@ -24,33 +26,41 @@ def choose_device(requested: str) -> torch.device:
     return torch.device("cpu")
 
 
-def load_split(data_dir: Path, split: str) -> torch.Tensor:
-    path = data_dir / f"{split}.pt"
+def load_split(data_dir: Path, split: str) -> np.memmap:
+    path = data_dir / f"{split}.bin"
     if not path.exists():
         raise FileNotFoundError(
             f"{path} does not exist. Run: python3 prepare_data.py"
         )
-    return torch.load(path, map_location="cpu", weights_only=True).long()
+    return np.memmap(path, dtype=np.uint16, mode="r")
 
 
 def sample_batch(
-    data: torch.Tensor,
+    data: np.ndarray | torch.Tensor,
     batch_size: int,
     context_length: int,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    if data.numel() <= context_length:
+    data_length = len(data)
+    if data_length <= context_length:
         raise ValueError("Dataset split is shorter than context_length")
-    starts = torch.randint(0, data.numel() - context_length, (batch_size,))
-    x = torch.stack([data[i : i + context_length] for i in starts])
-    y = torch.stack([data[i + 1 : i + context_length + 1] for i in starts])
+    starts = torch.randint(0, data_length - context_length, (batch_size,)).tolist()
+    if isinstance(data, torch.Tensor):
+        x = torch.stack([data[i : i + context_length] for i in starts])
+        y = torch.stack([data[i + 1 : i + context_length + 1] for i in starts])
+    else:
+        sequences = np.stack(
+            [data[i : i + context_length + 1] for i in starts]
+        ).astype(np.int64)
+        batch = torch.from_numpy(sequences)
+        x, y = batch[:, :-1], batch[:, 1:]
     return x.to(device), y.to(device)
 
 
 @torch.no_grad()
 def evaluate(
     model: TransformerLM,
-    data: torch.Tensor,
+    data: np.ndarray | torch.Tensor,
     batch_size: int,
     eval_batches: int,
     device: torch.device,
@@ -73,6 +83,8 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer,
     step: int,
     validation_loss: float,
+    tokenizer: str,
+    eos_token_id: int,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -82,6 +94,8 @@ def save_checkpoint(
             "optimizer_state": optimizer.state_dict(),
             "step": step,
             "validation_loss": validation_loss,
+            "tokenizer": tokenizer,
+            "eos_token_id": eos_token_id,
         },
         path,
     )
@@ -89,21 +103,23 @@ def save_checkpoint(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=Path, default=Path("data/wikitext2"))
-    parser.add_argument("--output_dir", type=Path, default=Path("checkpoints"))
+    parser.add_argument("--data_dir", type=Path, default=Path("data/tinystories"))
+    parser.add_argument(
+        "--output_dir", type=Path, default=Path("checkpoints/tinystories")
+    )
     parser.add_argument("--device", default="auto", help="auto, cpu, mps, cuda")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max_steps", type=int, default=5000)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--context_length", type=int, default=256)
-    parser.add_argument("--d_model", type=int, default=256)
-    parser.add_argument("--n_layers", type=int, default=4)
-    parser.add_argument("--n_heads", type=int, default=4)
+    parser.add_argument("--max_steps", type=int, default=20_000)
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--context_length", type=int, default=512)
+    parser.add_argument("--d_model", type=int, default=384)
+    parser.add_argument("--n_layers", type=int, default=6)
+    parser.add_argument("--n_heads", type=int, default=6)
     parser.add_argument("--mlp_ratio", type=float, default=4.0)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--learning_rate", type=float, default=3e-4)
     parser.add_argument("--weight_decay", type=float, default=0.1)
-    parser.add_argument("--eval_interval", type=int, default=250)
+    parser.add_argument("--eval_interval", type=int, default=500)
     parser.add_argument("--eval_batches", type=int, default=50)
     return parser.parse_args()
 
@@ -115,11 +131,18 @@ def main():
     device = choose_device(args.device)
     print(f"Using device: {device}")
 
+    metadata_path = args.data_dir / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(
+            f"{metadata_path} does not exist. Run: python3 prepare_data.py"
+        )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     train_data = load_split(args.data_dir, "train")
     validation_data = load_split(args.data_dir, "validation")
     test_data = load_split(args.data_dir, "test")
 
     config = ModelConfig(
+        vocab_size=metadata["vocab_size"],
         context_length=args.context_length,
         n_layers=args.n_layers,
         n_heads=args.n_heads,
@@ -130,6 +153,11 @@ def main():
     model = TransformerLM(config).to(device)
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
     print(f"Parameters: {parameter_count:,}")
+    print(
+        f"Training tokens: {len(train_data):,} | "
+        f"validation tokens: {len(validation_data):,} | "
+        f"test tokens: {len(test_data):,}"
+    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -171,6 +199,8 @@ def main():
                 optimizer,
                 step,
                 validation_loss,
+                metadata["tokenizer"],
+                metadata["eos_token_id"],
             )
             if validation_loss < best_validation_loss:
                 best_validation_loss = validation_loss
@@ -180,6 +210,8 @@ def main():
                     optimizer,
                     step,
                     validation_loss,
+                    metadata["tokenizer"],
+                    metadata["eos_token_id"],
                 )
 
     best = torch.load(
@@ -197,4 +229,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
