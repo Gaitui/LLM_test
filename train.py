@@ -77,15 +77,7 @@ def evaluate(
     return sum(losses) / len(losses)
 
 
-def save_checkpoint(
-    path: Path,
-    model: TransformerLM,
-    optimizer: torch.optim.Optimizer,
-    step: int,
-    validation_loss: float,
-    tokenizer: str,
-    eos_token_id: int,
-) -> None:
+def save_checkpoint(path, model, optimizer, step, validation_loss, tokenizer, eos_token_id):
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -101,7 +93,7 @@ def save_checkpoint(
     )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=Path, default=Path("data/tinystories"))
     parser.add_argument(

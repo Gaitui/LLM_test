@@ -43,13 +43,7 @@ class CausalSelfAttention(nn.Module):
             return tensor.view(batch, length, self.n_heads, self.head_dim).transpose(1, 2)
 
         q, k, v = map(split_heads, (q, k, v))
-        y = F.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            dropout_p=self.dropout if self.training else 0.0,
-            is_causal=True,
-        )
+        y = F.scaled_dot_product_attention(q, k, v, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(batch, length, width)
         return self.resid_dropout(self.proj(y))
 
@@ -116,9 +110,7 @@ class TransformerLM(nn.Module):
         logits = self.lm_head(self.final_norm(x))
         loss = None
         if targets is not None:
-            loss = F.cross_entropy(
-                logits.reshape(-1, logits.size(-1)), targets.reshape(-1)
-            )
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), targets.reshape(-1))
         return logits, loss
 
     @torch.no_grad()

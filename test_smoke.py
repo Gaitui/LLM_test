@@ -7,14 +7,7 @@ from train import sample_batch
 
 
 def test_forward_backward_and_generation():
-    config = ModelConfig(
-        vocab_size=257,
-        context_length=16,
-        n_layers=2,
-        n_heads=2,
-        d_model=32,
-        dropout=0.0,
-    )
+    config = ModelConfig(vocab_size=257, context_length=16, n_layers=2, n_heads=2, d_model=32, dropout=0.0)
     model = TransformerLM(config)
     data = torch.randint(0, config.vocab_size, (200,))
     x, y = sample_batch(data, batch_size=4, context_length=16, device=torch.device("cpu"))

@@ -27,9 +27,7 @@ def main():
     try:
         import tiktoken
     except ImportError as exc:
-        raise SystemExit(
-            "Missing dependency. Run: python3 -m pip install -r requirements.txt"
-        ) from exc
+        raise SystemExit("Missing dependency. Run: python3 -m pip install -r requirements.txt") from exc
 
     device = torch.device(args.device)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=True)
@@ -40,12 +38,7 @@ def main():
     tokenizer = tiktoken.get_encoding(checkpoint.get("tokenizer", "gpt2"))
     prompt_tokens = tokenizer.encode_ordinary(args.prompt)
     tokens = torch.tensor([prompt_tokens], dtype=torch.long, device=device)
-    generated = model.generate(
-        tokens,
-        max_new_tokens=args.max_new_tokens,
-        temperature=args.temperature,
-        top_k=args.top_k,
-    )[0].tolist()
+    generated = model.generate(tokens, max_new_tokens=args.max_new_tokens, temperature=args.temperature, top_k=args.top_k)[0].tolist()
     eos_token_id = checkpoint.get("eos_token_id", 50_256)
     if eos_token_id in generated:
         generated = generated[: generated.index(eos_token_id)]
