@@ -35,12 +35,7 @@ def load_split(data_dir: Path, split: str) -> np.memmap:
     return np.memmap(path, dtype=np.uint16, mode="r")
 
 
-def sample_batch(
-    data: np.ndarray | torch.Tensor,
-    batch_size: int,
-    context_length: int,
-    device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor]:
+def sample_batch(data, batch_size, context_length, device):
     data_length = len(data)
     if data_length <= context_length:
         raise ValueError("Dataset split is shorter than context_length")
@@ -49,22 +44,14 @@ def sample_batch(
         x = torch.stack([data[i : i + context_length] for i in starts])
         y = torch.stack([data[i + 1 : i + context_length + 1] for i in starts])
     else:
-        sequences = np.stack(
-            [data[i : i + context_length + 1] for i in starts]
-        ).astype(np.int64)
+        sequences = np.stack([data[i : i + context_length + 1] for i in starts]).astype(np.int64)
         batch = torch.from_numpy(sequences)
         x, y = batch[:, :-1], batch[:, 1:]
     return x.to(device), y.to(device)
 
 
 @torch.no_grad()
-def evaluate(
-    model: TransformerLM,
-    data: np.ndarray | torch.Tensor,
-    batch_size: int,
-    eval_batches: int,
-    device: torch.device,
-) -> float:
+def evaluate(model, data, batch_size, eval_batches, device):
     model.eval()
     losses = []
     for _ in range(eval_batches):
